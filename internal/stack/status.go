@@ -21,7 +21,7 @@ type StackStatus struct {
 func CheckStackStatus() StackStatus {
 
 	return StackStatus{
-		AdGuard: inspectContainer("adguardhome"),
+		AdGuard: inspectContainer("rootguard-adguard"),
 		Unbound: inspectContainer("rootguard-unbound"),
 	}
 }
@@ -42,8 +42,20 @@ func inspectContainer(name string) ContainerInfo {
 		}
 	}
 
-	var data []map[string]interface{}
-	json.Unmarshal(out.Bytes(), &data)
+	var data []struct {
+		State struct {
+			Running bool `json:"Running"`
+		} `json:"State"`
+		Config struct {
+			Image string `json:"Image"`
+		} `json:"Config"`
+		NetworkSettings struct {
+			Ports map[string]json.RawMessage `json:"Ports"`
+		} `json:"NetworkSettings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &data); err != nil {
+		return ContainerInfo{}
+	}
 
 	if len(data) == 0 {
 		return ContainerInfo{
@@ -52,25 +64,15 @@ func inspectContainer(name string) ContainerInfo {
 		}
 	}
 
-	state := data[0]["State"].(map[string]interface{})
-	config := data[0]["Config"].(map[string]interface{})
-	network := data[0]["NetworkSettings"].(map[string]interface{})
-
-	image := config["Image"].(string)
-	running := state["Running"].(bool)
-
 	var ports []string
-
-	if network["Ports"] != nil {
-		for k := range network["Ports"].(map[string]interface{}) {
-			ports = append(ports, k)
-		}
+	for port := range data[0].NetworkSettings.Ports {
+		ports = append(ports, port)
 	}
 
 	return ContainerInfo{
 		Exists:  true,
-		Running: running,
-		Image:   image,
+		Running: data[0].State.Running,
+		Image:   data[0].Config.Image,
 		Ports:   ports,
 	}
 }

@@ -1,3 +1,3 @@
-module github.com/foxly-it/rootguard
+module github.com/foxly-it/rootguard-core
 
-go 1.23.3
+go 1.26

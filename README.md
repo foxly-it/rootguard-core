@@ -9,7 +9,8 @@
 
 ## 📌 Overview
 
-RootGuard Core is the infrastructure engine of the RootGuard ecosystem.
+RootGuard Core is the authenticated infrastructure control plane of the
+RootGuard ecosystem.
 
 It provides deterministic orchestration logic for:
 
@@ -83,8 +84,18 @@ go build ./...
 ### Run
 
 ```bash
-go run ./cmd/rootguard
+ROOTGUARD_API_TOKEN="$(openssl rand -hex 32)" go run ./cmd/rootguard
 ```
+
+Core listens on port `8081` by default. Except for `/api/health`, every route
+requires `Authorization: Bearer <ROOTGUARD_API_TOKEN>`. Core is intended for an
+internal container network and must not be exposed directly to a LAN or WAN.
+
+### Unbound settings API
+
+`GET /api/unbound/settings` returns the active RootGuard settings. A validated
+`PUT` generates a modular Unbound configuration, checks it inside the resolver
+container and restarts Unbound only after successful validation.
 
 ---
 
@@ -94,7 +105,7 @@ go run ./cmd/rootguard
 package main
 
 import (
-    "rootguard-core/internal/stack"
+    "github.com/foxly-it/rootguard-core/internal/stack"
 )
 
 func main() {
