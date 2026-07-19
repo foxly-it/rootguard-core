@@ -42,14 +42,33 @@ func TestBootstrapInstallsAndConfiguresUnbound(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"dns_addresses": []string{"0.0.0.0"}})
 		case "/control/test_upstream_dns":
+			var request struct {
+				BootstrapDNS []string `json:"bootstrap_dns"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if len(request.BootstrapDNS) != 1 || request.BootstrapDNS[0] != "127.0.0.11" {
+				t.Fatalf("unexpected bootstrap resolvers: %v", request.BootstrapDNS)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"rootguard-unbound:5335": "OK"})
 		case "/control/dns_config":
+			var request struct {
+				BootstrapDNS []string `json:"bootstrap_dns"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if len(request.BootstrapDNS) != 1 || request.BootstrapDNS[0] != "127.0.0.11" {
+				t.Fatalf("unexpected persisted bootstrap resolvers: %v", request.BootstrapDNS)
+			}
 			dnsConfigCalls++
 			w.WriteHeader(http.StatusOK)
 		case "/control/dns_info":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"upstream_dns": []string{"rootguard-unbound:5335"},
-				"fallback_dns": []string{},
+				"upstream_dns":  []string{"rootguard-unbound:5335"},
+				"fallback_dns":  []string{},
+				"bootstrap_dns": []string{"127.0.0.11"},
 			})
 		default:
 			http.NotFound(w, r)
@@ -118,7 +137,7 @@ func newTestManager(t *testing.T, handler http.Handler) *Manager {
 }
 
 func newTestManagerWithDir(handler http.Handler, dir string) *Manager {
-	manager := NewManager("http://adguard-installer", "http://adguard", dir, "rootguard-unbound:5335")
+	manager := NewManager("http://adguard-installer", "http://adguard", dir, "rootguard-unbound:5335", "127.0.0.11")
 	manager.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)

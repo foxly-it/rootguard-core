@@ -28,6 +28,7 @@ func main() {
 		envOrDefault("ADGUARD_API_URL", "http://rootguard-adguard:80"),
 		envOrDefault("ADGUARD_DATA_DIR", "/var/lib/rootguard/adguard"),
 		envOrDefault("ADGUARD_UPSTREAM", "rootguard-unbound:5335"),
+		envOrDefault("ADGUARD_BOOTSTRAP_DNS", "127.0.0.11"),
 	)
 
 	handler := api.RegisterRoutes(api.Dependencies{

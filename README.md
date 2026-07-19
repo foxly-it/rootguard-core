@@ -109,6 +109,10 @@ The AdGuard credentials never leave Core and the API deliberately exposes no
 generic AdGuard proxy. Persist `ADGUARD_DATA_DIR` (default:
 `/var/lib/rootguard/adguard`) when running the container.
 
+Container deployments use `ADGUARD_BOOTSTRAP_DNS` (default: Docker's internal
+resolver at `127.0.0.11`) only to resolve the internal Unbound service name.
+It is never configured as a fallback for client DNS queries.
+
 ---
 
 ## 🧱 Example: Stack Deployment Flow

@@ -33,15 +33,17 @@ type Manager struct {
 	apiURL       string
 	dataDir      string
 	upstream     string
+	bootstrapDNS string
 	http         *http.Client
 }
 
-func NewManager(installerURL, apiURL, dataDir, upstream string) *Manager {
+func NewManager(installerURL, apiURL, dataDir, upstream, bootstrapDNS string) *Manager {
 	return &Manager{
 		installerURL: strings.TrimRight(installerURL, "/"),
 		apiURL:       strings.TrimRight(apiURL, "/"),
 		dataDir:      dataDir,
 		upstream:     upstream,
+		bootstrapDNS: bootstrapDNS,
 		http:         &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -63,8 +65,9 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	}
 
 	var dnsInfo struct {
-		UpstreamDNS []string `json:"upstream_dns"`
-		FallbackDNS []string `json:"fallback_dns"`
+		UpstreamDNS  []string `json:"upstream_dns"`
+		FallbackDNS  []string `json:"fallback_dns"`
+		BootstrapDNS []string `json:"bootstrap_dns"`
 	}
 	if err := m.request(ctx, http.MethodGet, m.apiURL+"/control/dns_info", nil, &dnsInfo, &credentials); err != nil {
 		return Status{}, fmt.Errorf("adguard dns info: %w", err)
@@ -75,7 +78,8 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 		Healthy:    true,
 		Upstream:   m.upstream,
 		UpstreamReady: len(dnsInfo.UpstreamDNS) == 1 &&
-			dnsInfo.UpstreamDNS[0] == m.upstream && len(dnsInfo.FallbackDNS) == 0,
+			dnsInfo.UpstreamDNS[0] == m.upstream && len(dnsInfo.FallbackDNS) == 0 &&
+			len(dnsInfo.BootstrapDNS) == 1 && dnsInfo.BootstrapDNS[0] == m.bootstrapDNS,
 	}, nil
 }
 
@@ -168,7 +172,7 @@ func (m *Manager) waitUntilReady(ctx context.Context, credentials Credentials) e
 
 func (m *Manager) configureUpstream(ctx context.Context, credentials Credentials) error {
 	testRequest := map[string]any{
-		"bootstrap_dns":    []string{},
+		"bootstrap_dns":    []string{m.bootstrapDNS},
 		"upstream_dns":     []string{m.upstream},
 		"fallback_dns":     []string{},
 		"private_upstream": []string{},
@@ -184,6 +188,7 @@ func (m *Manager) configureUpstream(ctx context.Context, credentials Credentials
 	dnsConfig := map[string]any{
 		"upstream_dns":  []string{m.upstream},
 		"fallback_dns":  []string{},
+		"bootstrap_dns": []string{m.bootstrapDNS},
 		"upstream_mode": "load_balance",
 	}
 	if err := m.request(ctx, http.MethodPost, m.apiURL+"/control/dns_config", dnsConfig, nil, &credentials); err != nil {
