@@ -97,6 +97,18 @@ internal container network and must not be exposed directly to a LAN or WAN.
 `PUT` generates a modular Unbound configuration, checks it inside the resolver
 container and restarts Unbound only after successful validation.
 
+### AdGuard bootstrap API
+
+`GET /api/adguard/status` reports whether AdGuard Home is configured, healthy,
+and connected exclusively to the RootGuard Unbound resolver. `POST
+/api/adguard/bootstrap` performs the one-time installer flow, generates and
+stores credentials with owner-only permissions, validates Unbound through the
+official AdGuard API, and applies it without a public fallback resolver.
+
+The AdGuard credentials never leave Core and the API deliberately exposes no
+generic AdGuard proxy. Persist `ADGUARD_DATA_DIR` (default:
+`/var/lib/rootguard/adguard`) when running the container.
+
 ---
 
 ## 🧱 Example: Stack Deployment Flow

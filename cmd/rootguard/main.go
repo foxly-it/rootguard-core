@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/foxly-it/rootguard-core/internal/adguard"
 	"github.com/foxly-it/rootguard-core/internal/api"
 	"github.com/foxly-it/rootguard-core/internal/unbound"
 )
@@ -22,10 +23,17 @@ func main() {
 		envOrDefault("UNBOUND_CONTAINER_CONFIG_DIR", "/etc/unbound/unbound.d"),
 		envOrDefault("UNBOUND_CONTAINER_NAME", "rootguard-unbound"),
 	)
+	adguardManager := adguard.NewManager(
+		envOrDefault("ADGUARD_INSTALLER_URL", "http://rootguard-adguard:3000"),
+		envOrDefault("ADGUARD_API_URL", "http://rootguard-adguard:80"),
+		envOrDefault("ADGUARD_DATA_DIR", "/var/lib/rootguard/adguard"),
+		envOrDefault("ADGUARD_UPSTREAM", "rootguard-unbound:5335"),
+	)
 
 	handler := api.RegisterRoutes(api.Dependencies{
 		Token:   token,
 		Unbound: manager,
+		AdGuard: adguardManager,
 	})
 
 	server := &http.Server{

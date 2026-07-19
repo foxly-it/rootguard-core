@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/foxly-it/rootguard-core/internal/adguard"
 	"github.com/foxly-it/rootguard-core/internal/docker"
 	"github.com/foxly-it/rootguard-core/internal/stack"
 	"github.com/foxly-it/rootguard-core/internal/unbound"
@@ -17,6 +18,7 @@ import (
 type Dependencies struct {
 	Token   string
 	Unbound *unbound.Manager
+	AdGuard *adguard.Manager
 }
 
 func RegisterRoutes(deps Dependencies) http.Handler {
@@ -29,6 +31,8 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("POST /api/services/{name}/{action}", serviceActionHandler)
 	apiMux.HandleFunc("GET /api/unbound/settings", getUnboundSettingsHandler(deps.Unbound))
 	apiMux.HandleFunc("PUT /api/unbound/settings", putUnboundSettingsHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/adguard/status", getAdGuardStatusHandler(deps.AdGuard))
+	apiMux.HandleFunc("POST /api/adguard/bootstrap", bootstrapAdGuardHandler(deps.AdGuard))
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -36,6 +40,28 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	})
 	root.Handle("/api/", requireBearerToken(deps.Token, apiMux))
 	return root
+}
+
+func getAdGuardStatusHandler(manager *adguard.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		status, err := manager.Status(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	}
+}
+
+func bootstrapAdGuardHandler(manager *adguard.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		status, err := manager.Bootstrap(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, status)
+	}
 }
 
 func systemHandler(w http.ResponseWriter, _ *http.Request) {
