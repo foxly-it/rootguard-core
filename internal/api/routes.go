@@ -31,6 +31,10 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("POST /api/services/{name}/{action}", serviceActionHandler)
 	apiMux.HandleFunc("GET /api/unbound/settings", getUnboundSettingsHandler(deps.Unbound))
 	apiMux.HandleFunc("PUT /api/unbound/settings", putUnboundSettingsHandler(deps.Unbound))
+	apiMux.HandleFunc("POST /api/unbound/preview", previewUnboundSettingsHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/unbound/history", unboundHistoryHandler(deps.Unbound))
+	apiMux.HandleFunc("POST /api/unbound/history/{id}/restore", restoreUnboundVersionHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/unbound/diagnostics", unboundDiagnosticsHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/adguard/status", getAdGuardStatusHandler(deps.AdGuard))
 	apiMux.HandleFunc("POST /api/adguard/bootstrap", bootstrapAdGuardHandler(deps.AdGuard))
 
@@ -207,6 +211,69 @@ func putUnboundSettingsHandler(manager *unbound.Manager) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, settings)
 	}
+}
+
+func previewUnboundSettingsHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		settings, ok := decodeUnboundSettings(w, r)
+		if !ok {
+			return
+		}
+		preview, err := manager.Preview(settings)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, unbound.ErrInvalidSettings) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+	}
+}
+
+func unboundHistoryHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		history, err := manager.History()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, history)
+	}
+}
+
+func restoreUnboundVersionHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		settings, err := manager.Restore(r.Context(), r.PathValue("id"))
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, unbound.ErrVersionNotFound) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, settings)
+	}
+}
+
+func unboundDiagnosticsHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, manager.Diagnose(r.Context()))
+	}
+}
+
+func decodeUnboundSettings(w http.ResponseWriter, r *http.Request) (unbound.Settings, bool) {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	var settings unbound.Settings
+	if err := decoder.Decode(&settings); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return unbound.Settings{}, false
+	}
+	return settings, true
 }
 
 func requireBearerToken(expected string, next http.Handler) http.Handler {

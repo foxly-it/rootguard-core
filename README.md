@@ -97,6 +97,17 @@ internal container network and must not be exposed directly to a LAN or WAN.
 `PUT` generates a modular Unbound configuration, checks it inside the resolver
 container and restarts Unbound only after successful validation.
 
+Unbound Configuration v2 adds the following authenticated endpoints:
+
+- `POST /api/unbound/preview` renders and compares a proposal without writing.
+- `GET /api/unbound/history` returns up to 20 versioned configurations.
+- `POST /api/unbound/history/{id}/restore` validates and restores a version.
+- `GET /api/unbound/diagnostics` checks syntax, resolution, and DNSSEC rejection.
+
+Every successful change records the previous and active state. If Unbound
+cannot restart after a change, Core restores the previous files and restarts
+the resolver again before returning an error.
+
 ### AdGuard bootstrap API
 
 `GET /api/adguard/status` reports whether AdGuard Home is configured, healthy,
