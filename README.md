@@ -103,6 +103,8 @@ Unbound Configuration v2 adds the following authenticated endpoints:
 - `GET /api/unbound/history` returns up to 20 versioned configurations.
 - `POST /api/unbound/history/{id}/restore` validates and restores a version.
 - `GET /api/unbound/diagnostics` checks syntax, resolution, and DNSSEC rejection.
+- `GET /api/unbound/presets` returns validated operational profiles.
+- `POST /api/unbound/advice` returns deterministic guidance for a draft.
 
 Every successful change records the previous and active state. If Unbound
 cannot restart after a change, Core restores the previous files and restarts

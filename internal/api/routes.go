@@ -35,6 +35,8 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("GET /api/unbound/history", unboundHistoryHandler(deps.Unbound))
 	apiMux.HandleFunc("POST /api/unbound/history/{id}/restore", restoreUnboundVersionHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/unbound/diagnostics", unboundDiagnosticsHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/unbound/presets", unboundPresetsHandler)
+	apiMux.HandleFunc("POST /api/unbound/advice", unboundAdviceHandler)
 	apiMux.HandleFunc("GET /api/adguard/status", getAdGuardStatusHandler(deps.AdGuard))
 	apiMux.HandleFunc("POST /api/adguard/bootstrap", bootstrapAdGuardHandler(deps.AdGuard))
 
@@ -262,6 +264,27 @@ func unboundDiagnosticsHandler(manager *unbound.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, manager.Diagnose(r.Context()))
 	}
+}
+
+func unboundPresetsHandler(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, unbound.Presets())
+}
+
+func unboundAdviceHandler(w http.ResponseWriter, r *http.Request) {
+	settings, ok := decodeUnboundSettings(w, r)
+	if !ok {
+		return
+	}
+	advice, err := unbound.Advise(settings)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, unbound.ErrInvalidSettings) {
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, advice)
 }
 
 func decodeUnboundSettings(w http.ResponseWriter, r *http.Request) (unbound.Settings, bool) {
