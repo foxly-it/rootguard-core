@@ -37,6 +37,10 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("GET /api/unbound/diagnostics", unboundDiagnosticsHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/unbound/presets", unboundPresetsHandler)
 	apiMux.HandleFunc("POST /api/unbound/advice", unboundAdviceHandler)
+	apiMux.HandleFunc("GET /api/unbound/custom", getUnboundCustomHandler(deps.Unbound))
+	apiMux.HandleFunc("POST /api/unbound/custom/preview", previewUnboundCustomHandler(deps.Unbound))
+	apiMux.HandleFunc("PUT /api/unbound/custom", putUnboundCustomHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/unbound/directives", unboundDirectivesHandler)
 	apiMux.HandleFunc("GET /api/adguard/status", getAdGuardStatusHandler(deps.AdGuard))
 	apiMux.HandleFunc("POST /api/adguard/bootstrap", bootstrapAdGuardHandler(deps.AdGuard))
 
@@ -285,6 +289,75 @@ func unboundAdviceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, advice)
+}
+
+type customConfigRequest struct {
+	Content string `json:"content"`
+}
+
+func getUnboundCustomHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		document, err := manager.LoadCustom()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, document)
+	}
+}
+
+func previewUnboundCustomHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		request, ok := decodeCustomConfig(w, r)
+		if !ok {
+			return
+		}
+		preview, err := manager.PreviewCustom(r.Context(), request.Content)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, unbound.ErrInvalidCustomConfig) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, preview)
+	}
+}
+
+func putUnboundCustomHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		request, ok := decodeCustomConfig(w, r)
+		if !ok {
+			return
+		}
+		document, err := manager.ApplyCustom(r.Context(), request.Content)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, unbound.ErrInvalidCustomConfig) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, document)
+	}
+}
+
+func unboundDirectivesHandler(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, unbound.DirectiveReferences())
+}
+
+func decodeCustomConfig(w http.ResponseWriter, r *http.Request) (customConfigRequest, bool) {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, unbound.MaxCustomConfigBytes+1024))
+	decoder.DisallowUnknownFields()
+	var request customConfigRequest
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return customConfigRequest{}, false
+	}
+	return request, true
 }
 
 func decodeUnboundSettings(w http.ResponseWriter, r *http.Request) (unbound.Settings, bool) {

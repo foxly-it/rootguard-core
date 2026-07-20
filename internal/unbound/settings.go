@@ -116,25 +116,27 @@ func (m *Manager) Load() (Settings, error) {
 func (m *Manager) Apply(ctx context.Context, settings Settings) error {
 	m.applyMu.Lock()
 	defer m.applyMu.Unlock()
+	custom, err := m.LoadCustom()
+	if err != nil {
+		return err
+	}
+	return m.applyStateLocked(ctx, settings, custom.Content)
+}
 
+func (m *Manager) applyStateLocked(ctx context.Context, settings Settings, custom string) error {
 	config, err := settings.Render()
+	if err != nil {
+		return err
+	}
+	custom, err = normalizeCustom(custom)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(m.hostConfigDir, 0755); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-
-	tempConfig := filepath.Join(m.hostConfigDir, ".rootguard-unbound.conf.tmp")
-	if err := os.WriteFile(tempConfig, config, 0644); err != nil {
-		return fmt.Errorf("write temporary config: %w", err)
-	}
-	defer os.Remove(tempConfig)
-
-	containerTemp := filepath.Join(m.containerConfigDir, filepath.Base(tempConfig))
-	output, err := m.run(ctx, "docker", "exec", m.containerName, "unbound-checkconf", containerTemp)
-	if err != nil {
-		return fmt.Errorf("validate unbound config: %w: %s", err, output)
+	if _, err := m.validateCombined(ctx, settings, custom); err != nil {
+		return err
 	}
 
 	currentSettings, err := m.Load()
@@ -145,7 +147,11 @@ func (m *Manager) Apply(ctx context.Context, settings Settings) error {
 	if err != nil {
 		return err
 	}
-	if err := m.recordSnapshot(currentSettings, currentConfig); err != nil {
+	currentCustom, err := m.LoadCustom()
+	if err != nil {
+		return err
+	}
+	if err := m.recordSnapshot(currentSettings, currentConfig, []byte(currentCustom.Content)); err != nil {
 		return fmt.Errorf("record current unbound version: %w", err)
 	}
 
@@ -155,6 +161,7 @@ func (m *Manager) Apply(ctx context.Context, settings Settings) error {
 	}
 	settingsData = append(settingsData, '\n')
 	configPath := filepath.Join(m.hostConfigDir, "50-rootguard.conf")
+	customPath := filepath.Join(m.hostConfigDir, "90-rootguard-custom.conf")
 	settingsPath := filepath.Join(m.hostConfigDir, "settings.json")
 	oldConfig, configExisted, err := readOptional(configPath)
 	if err != nil {
@@ -164,31 +171,61 @@ func (m *Manager) Apply(ctx context.Context, settings Settings) error {
 	if err != nil {
 		return fmt.Errorf("read previous unbound settings: %w", err)
 	}
+	oldCustom, customExisted, err := readOptional(customPath)
+	if err != nil {
+		return fmt.Errorf("read previous custom unbound config: %w", err)
+	}
 
-	if err := os.Rename(tempConfig, configPath); err != nil {
+	if err := writeAtomic(configPath, config, 0644); err != nil {
 		return fmt.Errorf("activate unbound config: %w", err)
 	}
 	if err := writeAtomic(settingsPath, settingsData, 0600); err != nil {
 		_ = restoreFile(configPath, oldConfig, configExisted, 0644)
 		return fmt.Errorf("activate settings: %w", err)
 	}
+	if err := writeOrRemove(customPath, []byte(custom), 0644); err != nil {
+		_ = restoreFile(configPath, oldConfig, configExisted, 0644)
+		_ = restoreFile(settingsPath, oldSettings, settingsExisted, 0600)
+		return fmt.Errorf("activate custom config: %w", err)
+	}
+
+	output, err := m.run(ctx, "docker", "exec", m.containerName, "unbound-checkconf", "/etc/unbound/unbound.conf")
+	if err != nil {
+		rollbackErr := restoreState(configPath, settingsPath, customPath, oldConfig, oldSettings, oldCustom, configExisted, settingsExisted, customExisted)
+		return fmt.Errorf("validate effective unbound config: %w: %s; files restored: %v", err, output, rollbackErr)
+	}
 
 	output, err = m.run(ctx, "docker", "restart", m.containerName)
 	if err != nil {
-		rollbackErr := errors.Join(
-			restoreFile(configPath, oldConfig, configExisted, 0644),
-			restoreFile(settingsPath, oldSettings, settingsExisted, 0600),
-		)
+		rollbackErr := restoreState(configPath, settingsPath, customPath, oldConfig, oldSettings, oldCustom, configExisted, settingsExisted, customExisted)
 		rollbackOutput, restartErr := m.run(ctx, "docker", "restart", m.containerName)
 		if rollbackErr != nil || restartErr != nil {
 			return fmt.Errorf("restart unbound: %w: %s; rollback failed: %v; rollback restart: %v: %s", err, output, rollbackErr, restartErr, rollbackOutput)
 		}
 		return fmt.Errorf("restart unbound: %w: %s; previous configuration restored", err, output)
 	}
-	if err := m.recordSnapshot(settings, config); err != nil {
+	if err := m.recordSnapshot(settings, config, []byte(custom)); err != nil {
 		return fmt.Errorf("record active unbound version: %w", err)
 	}
 	return nil
+}
+
+func writeOrRemove(path string, data []byte, mode os.FileMode) error {
+	if len(data) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return writeAtomic(path, data, mode)
+}
+
+func restoreState(configPath, settingsPath, customPath string, config, settings, custom []byte, configExisted, settingsExisted, customExisted bool) error {
+	return errors.Join(
+		restoreFile(configPath, config, configExisted, 0644),
+		restoreFile(settingsPath, settings, settingsExisted, 0600),
+		restoreFile(customPath, custom, customExisted, 0644),
+	)
 }
 
 func (m *Manager) activeConfig(settings Settings) ([]byte, error) {
