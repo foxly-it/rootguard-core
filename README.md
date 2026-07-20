@@ -105,6 +105,10 @@ Unbound Configuration v2 adds the following authenticated endpoints:
 - `GET /api/unbound/diagnostics` checks syntax, resolution, and DNSSEC rejection.
 - `GET /api/unbound/presets` returns validated operational profiles.
 - `POST /api/unbound/advice` returns deterministic guidance for a draft.
+- `GET /api/unbound/custom` reads the versioned expert configuration.
+- `POST /api/unbound/custom/preview` runs policy checks and `unbound-checkconf`.
+- `PUT /api/unbound/custom` validates and atomically activates the expert configuration.
+- `GET /api/unbound/directives` returns curated completion and documentation metadata.
 
 Every successful change records the previous and active state. If Unbound
 cannot restart after a change, Core restores the previous files and restarts

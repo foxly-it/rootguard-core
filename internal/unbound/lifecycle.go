@@ -1,6 +1,7 @@
 package unbound
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -31,10 +32,11 @@ type Preview struct {
 }
 
 type HistoryEntry struct {
-	ID        string    `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	Settings  Settings  `json:"settings"`
-	Config    string    `json:"config,omitempty"`
+	ID           string    `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	Settings     Settings  `json:"settings"`
+	Config       string    `json:"config,omitempty"`
+	CustomConfig string    `json:"custom_config,omitempty"`
 }
 
 type DiagnosticCheck struct {
@@ -122,7 +124,9 @@ func (m *Manager) Restore(ctx context.Context, id string) (Settings, error) {
 	if err := json.Unmarshal(data, &entry); err != nil {
 		return Settings{}, fmt.Errorf("decode unbound version: %w", err)
 	}
-	if err := m.Apply(ctx, entry.Settings); err != nil {
+	m.applyMu.Lock()
+	defer m.applyMu.Unlock()
+	if err := m.applyStateLocked(ctx, entry.Settings, entry.CustomConfig); err != nil {
 		return Settings{}, err
 	}
 	return entry.Settings, nil
@@ -172,18 +176,18 @@ func (m *Manager) diagnosticDNSSEC(ctx context.Context) DiagnosticCheck {
 	return check
 }
 
-func (m *Manager) recordSnapshot(settings Settings, config []byte) error {
+func (m *Manager) recordSnapshot(settings Settings, config, custom []byte) error {
 	history, err := m.History()
 	if err != nil {
 		return err
 	}
-	if len(history) > 0 && history[0].Settings == settings && history[0].Config == string(config) {
+	if len(history) > 0 && history[0].Settings == settings && history[0].Config == string(config) && history[0].CustomConfig == string(custom) {
 		return nil
 	}
-	digest := sha256.Sum256(config)
+	digest := sha256.Sum256(append(append(bytes.Clone(config), 0), custom...))
 	createdAt := m.now().UTC()
 	id := createdAt.Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(digest[:4])
-	entry := HistoryEntry{ID: id, CreatedAt: createdAt, Settings: settings, Config: string(config)}
+	entry := HistoryEntry{ID: id, CreatedAt: createdAt, Settings: settings, Config: string(config), CustomConfig: string(custom)}
 	data, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return err
