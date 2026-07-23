@@ -47,7 +47,7 @@ func TestApplyCreatesHistoryAndRestore(t *testing.T) {
 	}
 	var baselineID string
 	for _, entry := range history {
-		if entry.Settings == DefaultSettings() {
+		if settingsEqual(entry.Settings, DefaultSettings()) {
 			baselineID = entry.ID
 		}
 	}
@@ -59,14 +59,14 @@ func TestApplyCreatesHistoryAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restored != DefaultSettings() {
+	if !settingsEqual(restored, DefaultSettings()) {
 		t.Fatalf("unexpected restored settings: %+v", restored)
 	}
 	loaded, err := manager.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != DefaultSettings() {
+	if !settingsEqual(loaded, DefaultSettings()) {
 		t.Fatalf("restore did not activate baseline: %+v", loaded)
 	}
 }
@@ -98,7 +98,7 @@ func TestApplyRestoresPreviousFilesWhenRestartFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != initial {
+	if !settingsEqual(loaded, initial) {
 		t.Fatalf("failed restart left changed settings active: %+v", loaded)
 	}
 	config, err := os.ReadFile(filepath.Join(manager.hostConfigDir, "50-rootguard.conf"))

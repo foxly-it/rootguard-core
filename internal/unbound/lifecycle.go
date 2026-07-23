@@ -56,6 +56,13 @@ func (m *Manager) Preview(settings Settings) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
+	custom, err := m.LoadCustom()
+	if err != nil {
+		return Preview{}, err
+	}
+	if err := validateGuidedConflicts(settings, custom.Content); err != nil {
+		return Preview{}, err
+	}
 	current, err := m.Load()
 	if err != nil {
 		return Preview{}, err
@@ -65,7 +72,7 @@ func (m *Manager) Preview(settings Settings) (Preview, error) {
 }
 
 func settingsChanges(before, after Settings) []Change {
-	changes := make([]Change, 0, 6)
+	changes := make([]Change, 0, 7)
 	add := func(field string, oldValue, newValue any) {
 		oldText, newText := fmt.Sprint(oldValue), fmt.Sprint(newValue)
 		if oldText != newText {
@@ -78,7 +85,32 @@ func settingsChanges(before, after Settings) []Change {
 	add("cache_min_ttl", before.CacheMinTTL, after.CacheMinTTL)
 	add("cache_max_ttl", before.CacheMaxTTL, after.CacheMaxTTL)
 	add("threads", before.Threads, after.Threads)
+	if !forwardZonesEqual(before.ForwardZones, after.ForwardZones) {
+		changes = append(changes, Change{
+			Field:  "forward_zones",
+			Before: formatForwardZones(before.ForwardZones),
+			After:  formatForwardZones(after.ForwardZones),
+		})
+	}
 	return changes
+}
+
+func forwardZonesEqual(left, right []ForwardZone) bool {
+	return settingsEqual(
+		Settings{ForwardZones: left},
+		Settings{ForwardZones: right},
+	)
+}
+
+func formatForwardZones(zones []ForwardZone) string {
+	if len(zones) == 0 {
+		return "[]"
+	}
+	data, err := json.Marshal(zones)
+	if err != nil {
+		return fmt.Sprintf("%d zones", len(zones))
+	}
+	return string(data)
 }
 
 func (m *Manager) History() ([]HistoryEntry, error) {
@@ -181,7 +213,7 @@ func (m *Manager) recordSnapshot(settings Settings, config, custom []byte) error
 	if err != nil {
 		return err
 	}
-	if len(history) > 0 && history[0].Settings == settings && history[0].Config == string(config) && history[0].CustomConfig == string(custom) {
+	if len(history) > 0 && settingsEqual(history[0].Settings, settings) && history[0].Config == string(config) && history[0].CustomConfig == string(custom) {
 		return nil
 	}
 	digest := sha256.Sum256(append(append(bytes.Clone(config), 0), custom...))

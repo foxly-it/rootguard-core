@@ -101,6 +101,9 @@ func (m *Manager) ApplyCustom(ctx context.Context, content string) (CustomDocume
 }
 
 func (m *Manager) validateCombined(ctx context.Context, settings Settings, custom string) (string, error) {
+	if err := validateGuidedConflicts(settings, custom); err != nil {
+		return "", err
+	}
 	managed, err := settings.Render()
 	if err != nil {
 		return "", err
@@ -124,6 +127,22 @@ func (m *Manager) validateCombined(ctx context.Context, settings Settings, custo
 		detail = "unbound-checkconf: no errors"
 	}
 	return detail, nil
+}
+
+func validateGuidedConflicts(settings Settings, custom string) error {
+	if len(settings.ForwardZones) > 0 && containsDirective(custom, "forward-zone") {
+		return fmt.Errorf("%w: expert forward-zone blocks cannot be combined with guided conditional forwarding", ErrInvalidCustomConfig)
+	}
+	return nil
+}
+
+func containsDirective(content, expected string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if directiveKey(line) == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeCustom(content string) (string, error) {
