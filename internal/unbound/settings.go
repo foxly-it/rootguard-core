@@ -26,9 +26,10 @@ const (
 var rootGuardDNSNetwork = netip.MustParsePrefix("172.29.53.0/24")
 
 type ForwardZone struct {
-	Name         string   `json:"name"`
-	Servers      []string `json:"servers"`
-	ForwardFirst bool     `json:"forward_first"`
+	Name          string   `json:"name"`
+	Servers       []string `json:"servers"`
+	ForwardFirst  bool     `json:"forward_first"`
+	AllowUnsigned bool     `json:"allow_unsigned"`
 }
 
 type Settings struct {
@@ -151,6 +152,7 @@ func settingsEqual(left, right Settings) bool {
 		rightZone := right.ForwardZones[index]
 		if leftZone.Name != rightZone.Name ||
 			leftZone.ForwardFirst != rightZone.ForwardFirst ||
+			leftZone.AllowUnsigned != rightZone.AllowUnsigned ||
 			len(leftZone.Servers) != len(rightZone.Servers) {
 			return false
 		}
@@ -183,6 +185,12 @@ func (s Settings) Render() ([]byte, error) {
 	fmt.Fprintf(&out, "    cache-max-ttl: %d\n", s.CacheMaxTTL)
 	fmt.Fprintln(&out, "    # Parallel resolver workers; match this to the available CPU resources.")
 	fmt.Fprintf(&out, "    num-threads: %d\n", s.Threads)
+	for _, zone := range s.ForwardZones {
+		if zone.AllowUnsigned {
+			fmt.Fprintln(&out, "    # Split DNS: explicitly trust unsigned answers for this private forwarding zone.")
+			fmt.Fprintf(&out, "    domain-insecure: %q\n", zone.Name)
+		}
+	}
 	for _, zone := range s.ForwardZones {
 		fmt.Fprintln(&out)
 		fmt.Fprintln(&out, "# Conditional forwarding: send only this canonical DNS zone to the ordered targets.")
