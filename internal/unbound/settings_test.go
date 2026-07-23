@@ -71,10 +71,11 @@ func TestForwardZonesRenderCanonicalOrderedTargets(t *testing.T) {
 	settings := DefaultSettings()
 	settings.ForwardZones = []ForwardZone{
 		{
-			Name:          "corp.example.",
-			Servers:       []string{"192.0.2.53", "2001:db8::53"},
-			ForwardFirst:  true,
-			AllowUnsigned: true,
+			Name:                  "corp.example.",
+			Servers:               []string{"192.0.2.53", "2001:db8::53"},
+			ForwardFirst:          true,
+			AllowUnsigned:         true,
+			AllowPrivateAddresses: true,
 		},
 	}
 	config, err := settings.Render()
@@ -90,6 +91,7 @@ func TestForwardZonesRenderCanonicalOrderedTargets(t *testing.T) {
 		"forward-addr: 2001:db8::53",
 		"forward-first: yes",
 		`domain-insecure: "corp.example."`,
+		`private-domain: "corp.example."`,
 	} {
 		if !strings.Contains(rendered, expected) {
 			t.Errorf("rendered forwarding config does not contain %q", expected)
@@ -100,6 +102,9 @@ func TestForwardZonesRenderCanonicalOrderedTargets(t *testing.T) {
 	}
 	if strings.Index(rendered, `domain-insecure: "corp.example."`) > strings.Index(rendered, "forward-zone:") {
 		t.Fatal("domain-insecure must be rendered inside the server section")
+	}
+	if strings.Index(rendered, `private-domain: "corp.example."`) > strings.Index(rendered, "forward-zone:") {
+		t.Fatal("private-domain must be rendered inside the server section")
 	}
 }
 
@@ -115,6 +120,9 @@ func TestForwardZonesKeepDNSSECValidationByDefault(t *testing.T) {
 	}
 	if strings.Contains(string(config), "domain-insecure:") {
 		t.Fatal("unsigned zones must require explicit opt-in")
+	}
+	if strings.Contains(string(config), "private-domain:") {
+		t.Fatal("private-address answers must require explicit opt-in")
 	}
 }
 

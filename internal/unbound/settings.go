@@ -26,10 +26,11 @@ const (
 var rootGuardDNSNetwork = netip.MustParsePrefix("172.29.53.0/24")
 
 type ForwardZone struct {
-	Name          string   `json:"name"`
-	Servers       []string `json:"servers"`
-	ForwardFirst  bool     `json:"forward_first"`
-	AllowUnsigned bool     `json:"allow_unsigned"`
+	Name                  string   `json:"name"`
+	Servers               []string `json:"servers"`
+	ForwardFirst          bool     `json:"forward_first"`
+	AllowUnsigned         bool     `json:"allow_unsigned"`
+	AllowPrivateAddresses bool     `json:"allow_private_addresses"`
 }
 
 type Settings struct {
@@ -153,6 +154,7 @@ func settingsEqual(left, right Settings) bool {
 		if leftZone.Name != rightZone.Name ||
 			leftZone.ForwardFirst != rightZone.ForwardFirst ||
 			leftZone.AllowUnsigned != rightZone.AllowUnsigned ||
+			leftZone.AllowPrivateAddresses != rightZone.AllowPrivateAddresses ||
 			len(leftZone.Servers) != len(rightZone.Servers) {
 			return false
 		}
@@ -189,6 +191,10 @@ func (s Settings) Render() ([]byte, error) {
 		if zone.AllowUnsigned {
 			fmt.Fprintln(&out, "    # Split DNS: explicitly trust unsigned answers for this private forwarding zone.")
 			fmt.Fprintf(&out, "    domain-insecure: %q\n", zone.Name)
+		}
+		if zone.AllowPrivateAddresses {
+			fmt.Fprintln(&out, "    # DNS rebinding: allow RFC1918 and other configured private-address answers only for this zone.")
+			fmt.Fprintf(&out, "    private-domain: %q\n", zone.Name)
 		}
 	}
 	for _, zone := range s.ForwardZones {
