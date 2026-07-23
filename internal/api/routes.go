@@ -10,15 +10,21 @@ import (
 	"strings"
 
 	"github.com/foxly-it/rootguard-core/internal/adguard"
+	"github.com/foxly-it/rootguard-core/internal/controlplane"
 	"github.com/foxly-it/rootguard-core/internal/docker"
+	"github.com/foxly-it/rootguard-core/internal/installer"
 	"github.com/foxly-it/rootguard-core/internal/stack"
 	"github.com/foxly-it/rootguard-core/internal/unbound"
+	"github.com/foxly-it/rootguard-core/internal/updater"
 )
 
 type Dependencies struct {
-	Token   string
-	Unbound *unbound.Manager
-	AdGuard *adguard.Manager
+	Token        string
+	Unbound      *unbound.Manager
+	AdGuard      *adguard.Manager
+	Installer    *installer.Manager
+	Updater      *updater.Manager
+	ControlPlane *controlplane.Client
 }
 
 func RegisterRoutes(deps Dependencies) http.Handler {
@@ -29,7 +35,17 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("GET /api/dashboard", dashboardHandler)
 	apiMux.HandleFunc("GET /api/services", servicesHandler)
 	apiMux.HandleFunc("POST /api/services/{name}/{action}", serviceActionHandler)
+	apiMux.HandleFunc("GET /api/installation", installationStatusHandler(deps.Installer))
+	apiMux.HandleFunc("POST /api/installation/preflight", installationPreflightHandler(deps.Installer))
+	apiMux.HandleFunc("POST /api/installation/deploy", installationDeployHandler(deps.Installer))
+	apiMux.HandleFunc("GET /api/updates", updateStatusHandler(deps.Updater))
+	apiMux.HandleFunc("POST /api/updates/check", updateCheckHandler(deps.Updater))
+	apiMux.HandleFunc("POST /api/updates/{name}", updateServiceHandler(deps.Updater))
+	apiMux.HandleFunc("GET /api/control-plane-updates", controlPlaneStatusHandler(deps.ControlPlane))
+	apiMux.HandleFunc("POST /api/control-plane-updates/check", controlPlaneCheckHandler(deps.ControlPlane))
+	apiMux.HandleFunc("POST /api/control-plane-updates/install", controlPlaneUpdateHandler(deps.ControlPlane))
 	apiMux.HandleFunc("GET /api/unbound/settings", getUnboundSettingsHandler(deps.Unbound))
+	apiMux.HandleFunc("GET /api/unbound/config", getUnboundConfigurationHandler(deps.Unbound))
 	apiMux.HandleFunc("PUT /api/unbound/settings", putUnboundSettingsHandler(deps.Unbound))
 	apiMux.HandleFunc("POST /api/unbound/preview", previewUnboundSettingsHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/unbound/history", unboundHistoryHandler(deps.Unbound))
@@ -43,6 +59,7 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("GET /api/unbound/directives", unboundDirectivesHandler)
 	apiMux.HandleFunc("GET /api/adguard/status", getAdGuardStatusHandler(deps.AdGuard))
 	apiMux.HandleFunc("POST /api/adguard/bootstrap", bootstrapAdGuardHandler(deps.AdGuard))
+	apiMux.Handle("/api/adguard/ui/", deps.AdGuard.UIHandler())
 
 	root := http.NewServeMux()
 	root.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -50,6 +67,136 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	})
 	root.Handle("/api/", requireBearerToken(deps.Token, apiMux))
 	return root
+}
+
+func controlPlaneStatusHandler(client *controlplane.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := client.Status(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+func controlPlaneCheckHandler(client *controlplane.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := client.Check(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
+func controlPlaneUpdateHandler(client *controlplane.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := client.Update(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, result)
+	}
+}
+
+func updateStatusHandler(manager *updater.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, manager.Status())
+	}
+}
+
+func updateCheckHandler(manager *updater.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		status, err := manager.StartCheck()
+		if err != nil {
+			writeError(w, http.StatusConflict, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, status)
+	}
+}
+
+func updateServiceHandler(manager *updater.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		status, err := manager.StartUpdate(r.PathValue("name"))
+		if err != nil {
+			switch {
+			case errors.Is(err, updater.ErrBusy):
+				writeError(w, http.StatusConflict, err)
+			case errors.Is(err, updater.ErrUnknownService):
+				writeError(w, http.StatusBadRequest, err)
+			default:
+				writeError(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusAccepted, status)
+	}
+}
+
+func getUnboundConfigurationHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		configuration, err := manager.ActiveConfiguration(r.Context())
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, configuration)
+	}
+}
+
+func installationStatusHandler(manager *installer.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, manager.Status())
+	}
+}
+
+func installationPreflightHandler(manager *installer.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		config, ok := decodeInstallationConfig(w, r)
+		if !ok {
+			return
+		}
+		report := manager.Preflight(r.Context(), config)
+		writeJSON(w, http.StatusOK, report)
+	}
+}
+
+func installationDeployHandler(manager *installer.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		config, ok := decodeInstallationConfig(w, r)
+		if !ok {
+			return
+		}
+		status, err := manager.Start(r.Context(), config)
+		if err != nil {
+			switch {
+			case errors.Is(err, installer.ErrInvalidConfig):
+				writeError(w, http.StatusUnprocessableEntity, err)
+			case errors.Is(err, installer.ErrDeploying):
+				writeError(w, http.StatusConflict, err)
+			default:
+				writeError(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusAccepted, status)
+	}
+}
+
+func decodeInstallationConfig(w http.ResponseWriter, r *http.Request) (installer.Config, bool) {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10))
+	decoder.DisallowUnknownFields()
+	var config installer.Config
+	if err := decoder.Decode(&config); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return installer.Config{}, false
+	}
+	return config, true
 }
 
 func getAdGuardStatusHandler(manager *adguard.Manager) http.HandlerFunc {
@@ -132,7 +279,7 @@ func dashboardHandler(w http.ResponseWriter, _ *http.Request) {
 
 	writeJSON(w, http.StatusOK, dashboardResponse{
 		Docker: dashboardDocker{Containers: running, Status: dockerHealth},
-		DNS:    dashboardDNS{Status: dnsHealth, Resolver: "Unbound", DNSSEC: true},
+		DNS:    dashboardDNS{Status: dnsHealth, Resolver: "Unbound", DNSSEC: status.Unbound.Running},
 	})
 }
 

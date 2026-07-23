@@ -8,9 +8,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /rootguard-core ./cmd/r
 
 FROM docker:29-cli
 
-RUN addgroup -S rootguard && adduser -S -G rootguard rootguard \
-    && mkdir -p /var/lib/rootguard/unbound \
-    && chown -R rootguard:rootguard /var/lib/rootguard
+RUN apk add --no-cache docker-cli-compose \
+    && mkdir -p /var/lib/rootguard/unbound
 
 COPY --from=builder /rootguard-core /usr/local/bin/rootguard-core
 

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestBootstrapInstallsAndConfiguresUnbound(t *testing.T) {
@@ -103,6 +104,29 @@ func TestBootstrapRejectsBrokenUpstream(t *testing.T) {
 	manager := newTestManagerWithDir(handler, dir)
 	if _, err := manager.Bootstrap(context.Background()); err == nil {
 		t.Fatal("expected upstream validation failure")
+	}
+}
+
+func TestInstallerReadinessRetriesTemporaryFailures(t *testing.T) {
+	attempts := 0
+	manager := NewManager("http://adguard-installer", "http://adguard", t.TempDir(), "rootguard-unbound:5335")
+	manager.retryDelay = time.Millisecond
+	manager.http.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		attempts++
+		if attempts < 3 {
+			http.Error(recorder, "starting", http.StatusServiceUnavailable)
+		} else {
+			_ = json.NewEncoder(recorder).Encode(map[string]any{"interfaces": map[string]any{}})
+		}
+		return recorder.Result(), nil
+	})
+
+	if err := manager.waitUntilInstallerReady(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected three readiness attempts, got %d", attempts)
 	}
 }
 

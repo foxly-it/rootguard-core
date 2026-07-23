@@ -1,6 +1,6 @@
 # 🛡 RootGuard Core
 
-![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
+![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue.svg)
 ![Go](https://img.shields.io/badge/go-1.26+-00ADD8?logo=go)
 ![Status](https://img.shields.io/badge/status-active--development-orange)
 ![Architecture](https://img.shields.io/badge/architecture-engine--layer-purple)
@@ -62,6 +62,7 @@ rootguard-core/
 │       └── main.go
 ├── internal/
 │   ├── api/
+│   ├── installer/
 │   ├── configbuilder/
 │   ├── docker/
 │   ├── health/
@@ -99,6 +100,8 @@ container and restarts Unbound only after successful validation.
 
 Unbound Configuration v2 adds the following authenticated endpoints:
 
+- `GET /api/unbound/config` reads the immutable base and active managed
+  configuration directly from the running resolver for a read-only live view.
 - `POST /api/unbound/preview` renders and compares a proposal without writing.
 - `GET /api/unbound/history` returns up to 20 versioned configurations.
 - `POST /api/unbound/history/{id}/restore` validates and restores a version.
@@ -126,24 +129,20 @@ The AdGuard credentials never leave Core and the API deliberately exposes no
 generic AdGuard proxy. Persist `ADGUARD_DATA_DIR` (default:
 `/var/lib/rootguard/adguard`) when running the container.
 
----
+### AIO installation API
 
-## 🧱 Example: Stack Deployment Flow
+The long-lived WebApp and Core containers can start without an existing DNS
+data plane. Core exposes three authenticated, typed endpoints:
 
-```go
-package main
+- `GET /api/installation` returns persistent deployment state and progress.
+- `POST /api/installation/preflight` validates the DNS bind address, port,
+  Docker Engine access, and the Compose capability without changing the stack.
+- `POST /api/installation/deploy` starts the asynchronous, idempotent
+  deployment and protected AdGuard bootstrap.
 
-import (
-    "github.com/foxly-it/rootguard-core/internal/stack"
-)
-
-func main() {
-    err := stack.DeployStack()
-    if err != nil {
-        panic(err)
-    }
-}
-```
+The browser cannot provide arbitrary images, Compose content, volume mounts, or
+commands. Core owns the generated stack definition and never publishes the
+native AdGuard administration ports.
 
 ---
 
@@ -174,7 +173,8 @@ RootGuard Core is intended to evolve into:
 
 ## 📜 License
 
-Licensed under the Apache License 2.0.
+Licensed under the GNU Affero General Public License v3.0 or later
+(AGPL-3.0-or-later).
 
 See the LICENSE file for full details.
 
