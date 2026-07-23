@@ -53,6 +53,7 @@ func RegisterRoutes(deps Dependencies) http.Handler {
 	apiMux.HandleFunc("GET /api/unbound/diagnostics", unboundDiagnosticsHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/unbound/presets", unboundPresetsHandler)
 	apiMux.HandleFunc("POST /api/unbound/advice", unboundAdviceHandler)
+	apiMux.HandleFunc("POST /api/unbound/forward-check", unboundForwardCheckHandler(deps.Unbound))
 	apiMux.HandleFunc("GET /api/unbound/custom", getUnboundCustomHandler(deps.Unbound))
 	apiMux.HandleFunc("POST /api/unbound/custom/preview", previewUnboundCustomHandler(deps.Unbound))
 	apiMux.HandleFunc("PUT /api/unbound/custom", putUnboundCustomHandler(deps.Unbound))
@@ -355,7 +356,7 @@ func putUnboundSettingsHandler(manager *unbound.Manager) http.HandlerFunc {
 			return
 		}
 		if err := manager.Apply(r.Context(), settings); err != nil {
-			if errors.Is(err, unbound.ErrInvalidSettings) {
+			if errors.Is(err, unbound.ErrInvalidSettings) || errors.Is(err, unbound.ErrInvalidCustomConfig) {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
@@ -375,7 +376,7 @@ func previewUnboundSettingsHandler(manager *unbound.Manager) http.HandlerFunc {
 		preview, err := manager.Preview(settings)
 		if err != nil {
 			status := http.StatusInternalServerError
-			if errors.Is(err, unbound.ErrInvalidSettings) {
+			if errors.Is(err, unbound.ErrInvalidSettings) || errors.Is(err, unbound.ErrInvalidCustomConfig) {
 				status = http.StatusBadRequest
 			}
 			writeError(w, status, err)
@@ -436,6 +437,33 @@ func unboundAdviceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, advice)
+}
+
+type forwardCheckRequest struct {
+	Zones []unbound.ForwardZone `json:"zones"`
+}
+
+func unboundForwardCheckHandler(manager *unbound.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+		decoder.DisallowUnknownFields()
+		var request forwardCheckRequest
+		if err := decoder.Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		checks, err := manager.CheckForwardTargets(r.Context(), request.Zones)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, unbound.ErrInvalidSettings) {
+				status = http.StatusBadRequest
+			}
+			writeError(w, status, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, checks)
+	}
 }
 
 type customConfigRequest struct {

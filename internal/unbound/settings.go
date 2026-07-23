@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,13 +17,28 @@ import (
 
 var ErrInvalidSettings = errors.New("invalid unbound settings")
 
+const (
+	maxForwardZones   = 32
+	maxForwardServers = 8
+	maxForwardTargets = 32
+)
+
+var rootGuardDNSNetwork = netip.MustParsePrefix("172.29.53.0/24")
+
+type ForwardZone struct {
+	Name         string   `json:"name"`
+	Servers      []string `json:"servers"`
+	ForwardFirst bool     `json:"forward_first"`
+}
+
 type Settings struct {
-	QnameMinimisation bool `json:"qname_minimisation"`
-	Prefetch          bool `json:"prefetch"`
-	ServeExpired      bool `json:"serve_expired"`
-	CacheMinTTL       int  `json:"cache_min_ttl"`
-	CacheMaxTTL       int  `json:"cache_max_ttl"`
-	Threads           int  `json:"threads"`
+	QnameMinimisation bool          `json:"qname_minimisation"`
+	Prefetch          bool          `json:"prefetch"`
+	ServeExpired      bool          `json:"serve_expired"`
+	CacheMinTTL       int           `json:"cache_min_ttl"`
+	CacheMaxTTL       int           `json:"cache_max_ttl"`
+	Threads           int           `json:"threads"`
+	ForwardZones      []ForwardZone `json:"forward_zones"`
 }
 
 type ActiveConfiguration struct {
@@ -40,6 +56,7 @@ func DefaultSettings() Settings {
 		CacheMinTTL:       0,
 		CacheMaxTTL:       86400,
 		Threads:           2,
+		ForwardZones:      []ForwardZone{},
 	}
 }
 
@@ -56,7 +73,94 @@ func (s Settings) Validate() error {
 	if s.Threads < 1 || s.Threads > 32 {
 		return fmt.Errorf("%w: threads must be between 1 and 32", ErrInvalidSettings)
 	}
+	if len(s.ForwardZones) > maxForwardZones {
+		return fmt.Errorf("%w: forward_zones must contain at most %d zones", ErrInvalidSettings, maxForwardZones)
+	}
+	zoneNames := make(map[string]struct{}, len(s.ForwardZones))
+	targetCount := 0
+	for zoneIndex, zone := range s.ForwardZones {
+		if err := validateCanonicalZoneName(zone.Name); err != nil {
+			return fmt.Errorf("%w: forward_zones[%d].name: %v", ErrInvalidSettings, zoneIndex, err)
+		}
+		if _, exists := zoneNames[zone.Name]; exists {
+			return fmt.Errorf("%w: forward_zones[%d].name duplicates %q", ErrInvalidSettings, zoneIndex, zone.Name)
+		}
+		zoneNames[zone.Name] = struct{}{}
+		if len(zone.Servers) == 0 || len(zone.Servers) > maxForwardServers {
+			return fmt.Errorf("%w: forward_zones[%d].servers must contain between 1 and %d addresses", ErrInvalidSettings, zoneIndex, maxForwardServers)
+		}
+		targetCount += len(zone.Servers)
+		if targetCount > maxForwardTargets {
+			return fmt.Errorf("%w: forward_zones must contain at most %d total server addresses", ErrInvalidSettings, maxForwardTargets)
+		}
+		servers := make(map[netip.Addr]struct{}, len(zone.Servers))
+		for serverIndex, server := range zone.Servers {
+			address, err := netip.ParseAddr(server)
+			if err != nil || address.String() != server {
+				return fmt.Errorf("%w: forward_zones[%d].servers[%d] must be a canonical IPv4 or IPv6 address", ErrInvalidSettings, zoneIndex, serverIndex)
+			}
+			routedAddress := address.Unmap()
+			if routedAddress.IsUnspecified() || routedAddress.IsLoopback() || routedAddress.IsMulticast() || routedAddress.IsLinkLocalUnicast() || rootGuardDNSNetwork.Contains(routedAddress) {
+				return fmt.Errorf("%w: forward_zones[%d].servers[%d] points to a local or reserved RootGuard resolver address", ErrInvalidSettings, zoneIndex, serverIndex)
+			}
+			if _, exists := servers[address]; exists {
+				return fmt.Errorf("%w: forward_zones[%d].servers[%d] duplicates %q", ErrInvalidSettings, zoneIndex, serverIndex, server)
+			}
+			servers[address] = struct{}{}
+		}
+	}
 	return nil
+}
+
+func validateCanonicalZoneName(name string) error {
+	if name == "." {
+		return errors.New("the root zone is managed by RootGuard recursion and cannot be forwarded")
+	}
+	if len(name) < 2 || len(name) > 254 || !strings.HasSuffix(name, ".") || name != strings.ToLower(name) || strings.TrimSpace(name) != name {
+		return errors.New("must be a lowercase canonical FQDN ending in a dot")
+	}
+	labels := strings.Split(strings.TrimSuffix(name, "."), ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 || !isASCIILetterOrDigit(label[0]) || !isASCIILetterOrDigit(label[len(label)-1]) {
+			return errors.New("contains an invalid DNS label")
+		}
+		for index := 1; index < len(label)-1; index++ {
+			if !isASCIILetterOrDigit(label[index]) && label[index] != '-' {
+				return errors.New("contains an invalid DNS label")
+			}
+		}
+	}
+	return nil
+}
+
+func isASCIILetterOrDigit(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9'
+}
+
+func settingsEqual(left, right Settings) bool {
+	if left.QnameMinimisation != right.QnameMinimisation ||
+		left.Prefetch != right.Prefetch ||
+		left.ServeExpired != right.ServeExpired ||
+		left.CacheMinTTL != right.CacheMinTTL ||
+		left.CacheMaxTTL != right.CacheMaxTTL ||
+		left.Threads != right.Threads ||
+		len(left.ForwardZones) != len(right.ForwardZones) {
+		return false
+	}
+	for index, leftZone := range left.ForwardZones {
+		rightZone := right.ForwardZones[index]
+		if leftZone.Name != rightZone.Name ||
+			leftZone.ForwardFirst != rightZone.ForwardFirst ||
+			len(leftZone.Servers) != len(rightZone.Servers) {
+			return false
+		}
+		for serverIndex, leftServer := range leftZone.Servers {
+			if leftServer != rightZone.Servers[serverIndex] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (s Settings) Render() ([]byte, error) {
@@ -79,6 +183,19 @@ func (s Settings) Render() ([]byte, error) {
 	fmt.Fprintf(&out, "    cache-max-ttl: %d\n", s.CacheMaxTTL)
 	fmt.Fprintln(&out, "    # Parallel resolver workers; match this to the available CPU resources.")
 	fmt.Fprintf(&out, "    num-threads: %d\n", s.Threads)
+	for _, zone := range s.ForwardZones {
+		fmt.Fprintln(&out)
+		fmt.Fprintln(&out, "# Conditional forwarding: send only this canonical DNS zone to the ordered targets.")
+		fmt.Fprintln(&out, "forward-zone:")
+		fmt.Fprintln(&out, "    # Zone suffix matched by this forwarding rule.")
+		fmt.Fprintf(&out, "    name: %q\n", zone.Name)
+		for _, server := range zone.Servers {
+			fmt.Fprintln(&out, "    # Upstream resolver address; order is preserved for deterministic configuration.")
+			fmt.Fprintf(&out, "    forward-addr: %s\n", server)
+		}
+		fmt.Fprintln(&out, "    # If enabled, fall back to normal recursion when every forward target fails.")
+		fmt.Fprintf(&out, "    forward-first: %s\n", yesNo(zone.ForwardFirst))
+	}
 	return out.Bytes(), nil
 }
 
@@ -123,6 +240,9 @@ func (m *Manager) Load() (Settings, error) {
 	var settings Settings
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{}, fmt.Errorf("decode saved settings: %w", err)
+	}
+	if settings.ForwardZones == nil {
+		settings.ForwardZones = []ForwardZone{}
 	}
 	return settings, settings.Validate()
 }

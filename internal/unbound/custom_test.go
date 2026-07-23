@@ -106,3 +106,22 @@ func TestCustomAdvisorFlagsHardeningAndForwarding(t *testing.T) {
 		t.Fatalf("expected hardening and forwarding advice: %+v", advice)
 	}
 }
+
+func TestGuidedForwardingRejectsExpertForwardZoneConflict(t *testing.T) {
+	manager := newTestManager(t)
+	if _, err := manager.ApplyCustom(context.Background(), "forward-zone:\n    name: \"legacy.example.\"\n    forward-addr: 192.0.2.53\n"); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := DefaultSettings()
+	settings.ForwardZones = []ForwardZone{{
+		Name:    "corp.example.",
+		Servers: []string{"192.0.2.54"},
+	}}
+	if _, err := manager.Preview(settings); !errors.Is(err, ErrInvalidCustomConfig) {
+		t.Fatalf("expected guided/expert conflict, got %v", err)
+	}
+	if err := manager.Apply(context.Background(), settings); !errors.Is(err, ErrInvalidCustomConfig) {
+		t.Fatalf("expected apply conflict, got %v", err)
+	}
+}
