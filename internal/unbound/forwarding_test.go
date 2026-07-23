@@ -16,9 +16,9 @@ func TestCheckForwardTargetsPreservesZoneAndServerOrder(t *testing.T) {
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "@192.0.2.53 corp.example. SOA"):
-			return []byte("status: NOERROR"), nil
+			return []byte("status: NOERROR\ncorp.example. 300 IN SOA ns.corp.example. hostmaster.corp.example. 1 60 60 60 60"), nil
 		case strings.Contains(joined, "@2001:db8::53 corp.example. SOA"):
-			return []byte("status: NXDOMAIN"), nil
+			return []byte("status: NXDOMAIN\nexample. 300 IN SOA ns.example. hostmaster.example. 1 60 60 60 60"), nil
 		case strings.Contains(joined, "@192.0.2.54 lab.example. SOA"):
 			return []byte("status: REFUSED"), nil
 		default:
@@ -37,16 +37,34 @@ func TestCheckForwardTargetsPreservesZoneAndServerOrder(t *testing.T) {
 		t.Fatalf("expected three checks, got %+v", checks)
 	}
 	for index, expected := range []struct {
-		zone    string
-		address string
+		zone      string
+		address   string
+		reachable bool
 	}{
-		{zone: "corp.example.", address: "192.0.2.53"},
+		{zone: "corp.example.", address: "192.0.2.53", reachable: true},
 		{zone: "corp.example.", address: "2001:db8::53"},
 		{zone: "lab.example.", address: "192.0.2.54"},
 	} {
-		if checks[index].Zone != expected.zone || checks[index].Address != expected.address || !checks[index].Reachable {
+		if checks[index].Zone != expected.zone || checks[index].Address != expected.address || checks[index].Reachable != expected.reachable {
 			t.Fatalf("unexpected check at index %d: %+v", index, checks[index])
 		}
+	}
+}
+
+func TestCheckForwardTargetsRequiresZoneSOA(t *testing.T) {
+	manager := newTestManager(t)
+	manager.run = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return []byte("status: NOERROR"), nil
+	}
+	checks, err := manager.CheckForwardTargets(context.Background(), []ForwardZone{{
+		Name:    "corp.example.",
+		Servers: []string{"192.0.2.53"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != 1 || checks[0].Reachable || !strings.Contains(checks[0].Detail, "did not return an SOA") {
+		t.Fatalf("unexpected incomplete zone check: %+v", checks)
 	}
 }
 
