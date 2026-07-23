@@ -79,22 +79,52 @@ func (m *Manager) checkForwardTarget(ctx context.Context, zone, address string) 
 	output, err := m.run(
 		targetContext,
 		"docker", "exec", m.containerName,
-		"dig", "+time=3", "+tries=1", "+noall", "+comments", "@"+address, zone, "SOA",
+		"dig", "+time=3", "+tries=1", "+noall", "+comments", "+answer", "+authority", "@"+address, zone, "SOA",
 	)
 	detail := strings.TrimSpace(string(output))
-	if len(detail) > maxForwardCheckDetail {
-		detail = detail[:maxForwardCheckDetail] + "…"
-	}
 	if err != nil {
 		if detail == "" {
 			detail = err.Error()
 		} else {
 			detail = fmt.Sprintf("%v: %s", err, detail)
 		}
-		return ForwardTargetCheck{Zone: zone, Address: address, Detail: detail}
+		return ForwardTargetCheck{Zone: zone, Address: address, Detail: boundForwardCheckDetail(detail)}
 	}
-	if detail == "" {
-		detail = "DNS server answered the reachability probe"
+	if !strings.Contains(detail, "status: NOERROR") {
+		return ForwardTargetCheck{Zone: zone, Address: address, Detail: boundForwardCheckDetail(detail)}
 	}
-	return ForwardTargetCheck{Zone: zone, Address: address, Reachable: true, Detail: detail}
+	hasSOA := hasSOARecord(detail)
+	if !hasSOA {
+		if detail != "" {
+			detail += "\n"
+		}
+		detail += "DNS server did not return an SOA record for the forwarding zone"
+	}
+	return ForwardTargetCheck{
+		Zone: zone, Address: address,
+		Reachable: hasSOA,
+		Detail:    boundForwardCheckDetail(detail),
+	}
+}
+
+func hasSOARecord(detail string) bool {
+	for line := range strings.SplitSeq(detail, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, ";") {
+			continue
+		}
+		for _, field := range strings.Fields(line) {
+			if field == "SOA" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func boundForwardCheckDetail(detail string) string {
+	if len(detail) > maxForwardCheckDetail {
+		return detail[:maxForwardCheckDetail] + "…"
+	}
+	return detail
 }
