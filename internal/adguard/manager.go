@@ -34,6 +34,7 @@ type Manager struct {
 	dataDir      string
 	upstream     string
 	http         *http.Client
+	retryDelay   time.Duration
 }
 
 func NewManager(installerURL, apiURL, dataDir, upstream string) *Manager {
@@ -43,6 +44,7 @@ func NewManager(installerURL, apiURL, dataDir, upstream string) *Manager {
 		dataDir:      dataDir,
 		upstream:     upstream,
 		http:         &http.Client{Timeout: 10 * time.Second},
+		retryDelay:   500 * time.Millisecond,
 	}
 }
 
@@ -97,8 +99,8 @@ func (m *Manager) Bootstrap(ctx context.Context) (Status, error) {
 }
 
 func (m *Manager) install(ctx context.Context) (Credentials, error) {
-	if err := m.request(ctx, http.MethodGet, m.installerURL+"/control/install/get_addresses", nil, nil, nil); err != nil {
-		return Credentials{}, fmt.Errorf("adguard installer is not reachable: %w", err)
+	if err := m.waitUntilInstallerReady(ctx); err != nil {
+		return Credentials{}, err
 	}
 
 	credentials, err := generateCredentials()
@@ -148,6 +150,22 @@ func (m *Manager) install(ctx context.Context) (Credentials, error) {
 		return Credentials{}, fmt.Errorf("activate adguard credentials: %w", err)
 	}
 	return credentials, nil
+}
+
+func (m *Manager) waitUntilInstallerReady(ctx context.Context) error {
+	var lastErr error
+	for attempt := 0; attempt < 60; attempt++ {
+		lastErr = m.request(ctx, http.MethodGet, m.installerURL+"/control/install/get_addresses", nil, nil, nil)
+		if lastErr == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for AdGuard installer: %w", ctx.Err())
+		case <-time.After(m.retryDelay):
+		}
+	}
+	return fmt.Errorf("adguard installer did not become ready: %w", lastErr)
 }
 
 func (m *Manager) waitUntilReady(ctx context.Context, credentials Credentials) error {
