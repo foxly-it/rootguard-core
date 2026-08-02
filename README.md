@@ -65,6 +65,9 @@ submodules and run `docker compose up --build -d`.
 
 ## API areas
 
+The complete method, path, authentication, and response reference is available
+in [`docs/api.md`](docs/api.md).
+
 | Area | Responsibility |
 | --- | --- |
 | Installation | Preflight checks, persistent progress, managed DNS deployment |
