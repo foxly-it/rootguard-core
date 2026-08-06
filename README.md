@@ -1,5 +1,10 @@
 # RootGuard Core
 
+> [!IMPORTANT]
+> This repository is archived. Development moved to the
+> [`rootguard` monorepo](https://github.com/foxly-it/rootguard/tree/main/rootguard-core)
+> (`rootguard-core/` directory) — full history preserved there.
+
 ![RootGuard Core – Secure DNS orchestration](assets/rootguard-core-social-preview.png)
 
 **RootGuard Core is the authenticated control plane behind the RootGuard
